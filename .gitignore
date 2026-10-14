@@ -179,3 +179,36 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# Reference Project
+reference/
+
+# AI Agents
+AGENTS.md
+CLAUDE.md
+kb/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon[\r]
+
+# AppleDouble 资源分叉文件（如 ._index.html）
+._*
+
+# 卷根目录下可能出现的文件
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# 网络共享卷（AFP）上可能出现的文件
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
