@@ -28,8 +28,10 @@ def main() -> int:
         logging.basicConfig(level=logging.WARNING)
 
     from m3u8_downloader.gui.main_window import MainWindow
+    from m3u8_downloader.gui.material import apply_material_theme
 
     app = QApplication(sys.argv)
+    apply_material_theme(app)
     window = MainWindow()
     window.show()
     return app.exec()

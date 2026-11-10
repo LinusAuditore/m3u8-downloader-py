@@ -1,33 +1,51 @@
-"""片段状态网格：参考项目的片段 Icon 交互（灰待下载/蓝下载中/绿完成/红失败，点击红色重试）。"""
+"""片段状态网格：Material Design 1 风格色块交互（灰待下载/蓝下载中/绿完成/红失败，点击红色重试）。"""
 
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QGridLayout, QLabel, QWidget
+from PySide6.QtWidgets import QGridLayout, QPushButton, QWidget
 
 from m3u8_downloader.core.models import SegmentStatus
+from m3u8_downloader.gui import material
 
 
-class _SegmentLabel(QLabel):
+class _SegmentLabel(QPushButton):
+    """单个片段状态块；继承 QPushButton 以暴露 AXButton / AXPress 无障碍动作。"""
+
     clicked = Signal(int)
 
     def __init__(self, index: int, parent: QWidget | None = None) -> None:
         super().__init__(str(index + 1), parent)
         self._index = index
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setFixedSize(38, 26)
+        self.setFlat(True)
+        self.setFixedSize(36, 24)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
     def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self._index)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def nextCheckState(self) -> None:
+        # 供 macOS Accessibility AXPress (QAccessibleButton) 触发
         self.clicked.emit(self._index)
 
 
 class SegmentGrid(QWidget):
     COLORS = {
-        SegmentStatus.PENDING: "#dddddd",
-        SegmentStatus.DOWNLOADING: "#3d8ac7",
-        SegmentStatus.DONE: "#0acd76",
-        SegmentStatus.FAILED: "#dc5350",
+        SegmentStatus.PENDING: material.STATUS_PENDING,
+        SegmentStatus.DOWNLOADING: material.STATUS_DOWNLOADING,
+        SegmentStatus.DONE: material.STATUS_DONE,
+        SegmentStatus.FAILED: material.STATUS_FAILED,
+    }
+    TEXT_COLORS = {
+        SegmentStatus.PENDING: material.STATUS_PENDING_TEXT,
+        SegmentStatus.DOWNLOADING: material.TEXT_ON_PRIMARY,
+        SegmentStatus.DONE: material.TEXT_ON_PRIMARY,
+        SegmentStatus.FAILED: material.TEXT_ON_PRIMARY,
     }
     COLUMNS = 20
     failed_clicked = Signal(int)
@@ -36,8 +54,13 @@ class SegmentGrid(QWidget):
         super().__init__(parent)
         self._labels: list[_SegmentLabel] = []
         self._statuses: list[SegmentStatus] = []
+        self.setStyleSheet("background-color: #FAFAFA;")
         self._grid = QGridLayout(self)
-        self._grid.setSpacing(3)
+        self._grid.setContentsMargins(10, 10, 10, 10)
+        self._grid.setSpacing(4)
+        self._grid.setAlignment(
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
+        )
 
     @property
     def statuses(self) -> list[SegmentStatus]:
@@ -78,8 +101,16 @@ class SegmentGrid(QWidget):
         if 0 <= index < len(self._statuses) and self._statuses[index] is SegmentStatus.FAILED:
             self.failed_clicked.emit(index)
 
-    def _apply_style(self, label: QLabel, status: SegmentStatus) -> None:
+    def _apply_style(self, label: _SegmentLabel, status: SegmentStatus) -> None:
+        text_color = self.TEXT_COLORS[status]
         label.setStyleSheet(
-            f"background-color: {self.COLORS[status]};"
-            "color: white; border-radius: 3px; font-size: 11px;"
+            f"QPushButton {{"
+            f" background-color: {self.COLORS[status]};"
+            f" color: {text_color};"
+            f" border: none;"
+            f" border-radius: 2px;"
+            f" font-size: 11px;"
+            f" font-weight: 500;"
+            f" padding: 0px;"
+            f"}}"
         )

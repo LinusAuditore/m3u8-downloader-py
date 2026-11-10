@@ -1,4 +1,4 @@
-"""主窗口：地址输入、码率选择、进度与片段网格、设置与任务级覆盖。
+"""主窗口：Material Design 1 风格（#3388BB），包含 App Bar、Paper 卡片、进度与片段网格。
 
 线程约定：网络/磁盘耗时操作全部在 workers.py 的 QThread 中执行，
 本窗口只在信号槽（主线程）里更新控件。
@@ -9,24 +9,18 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QCheckBox,
-    QComboBox,
     QDialog,
     QDialogButtonBox,
-    QGroupBox,
+    QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QMainWindow,
     QMessageBox,
-    QProgressBar,
-    QPushButton,
     QScrollArea,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -39,10 +33,22 @@ from m3u8_downloader.core.models import (
     MasterPlaylist,
     MediaPlaylist,
     OutputFormat,
-    SegmentStatus,
     Task,
     TaskEvent,
     Variant,
+)
+from m3u8_downloader.gui import material
+from m3u8_downloader.gui.material import (
+    MdAppBar,
+    MdButton,
+    MdCard,
+    MdCheckBox,
+    MdComboBox,
+    MdLineEdit,
+    MdProgressBar,
+    MdSpinBox,
+    ensure_material_theme,
+    style_dialog_button_box,
 )
 from m3u8_downloader.gui.segment_grid import SegmentGrid
 from m3u8_downloader.gui.settings_dialog import SettingsDialog
@@ -55,8 +61,9 @@ logger = logging.getLogger(__name__)
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
+        ensure_material_theme()
         self.setWindowTitle("m3u8 下载器")
-        self.resize(880, 660)
+        self.resize(920, 700)
 
         self.settings: Settings = load_settings()
         self._task_headers: dict[str, str] = {}
@@ -76,90 +83,150 @@ class MainWindow(QMainWindow):
     def _build_ui(self) -> None:
         central = QWidget()
         self.setCentralWidget(central)
-        root = QVBoxLayout(central)
+        outer = QVBoxLayout(central)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        # —— 任务输入 ——
-        input_box = QGroupBox("任务")
-        root.addWidget(input_box)
-        form = QGridLayout(input_box)
+        # —— 顶部 Material Design 1 App Bar ——
+        self.app_bar = MdAppBar("m3u8 下载器")
+        self.headers_button = MdButton("请求头覆盖…", variant="appbar")
+        self.headers_button.clicked.connect(self._open_task_override)
+        self.settings_button = MdButton("设置…", variant="appbar")
+        self.settings_button.clicked.connect(self._open_settings)
+        self.app_bar.add_action_widget(self.headers_button)
+        self.app_bar.add_action_widget(self.settings_button)
+        outer.addWidget(self.app_bar)
 
-        self.url_edit = QLineEdit()
+        # —— 下方内容画布区（#F5F5F5，16dp 网格边距）——
+        canvas = QWidget()
+        outer.addWidget(canvas, 1)
+        root = QVBoxLayout(canvas)
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(16)
+
+        # —— 卡片 1：任务输入与控制 ——
+        input_card = MdCard("任务配置")
+        root.addWidget(input_card)
+        form = QGridLayout()
+        form.setHorizontalSpacing(16)
+        form.setVerticalSpacing(12)
+        form.setColumnStretch(1, 3)
+        form.setColumnStretch(3, 2)
+        input_card.body_layout.addLayout(form)
+
+        self.url_edit = MdLineEdit()
         self.url_edit.setPlaceholderText(
             "m3u8 播放列表地址（支持 master 播放列表，开始后选择码率）"
         )
-        form.addWidget(QLabel("地址"), 0, 0)
+        form.addWidget(self._field_label("地址"), 0, 0)
         form.addWidget(self.url_edit, 0, 1, 1, 3)
 
-        self.title_edit = QLineEdit()
+        self.title_edit = MdLineEdit()
         self.title_edit.setPlaceholderText("留空自动命名（取地址主干）")
-        form.addWidget(QLabel("文件名"), 1, 0)
+        form.addWidget(self._field_label("文件名"), 1, 0)
         form.addWidget(self.title_edit, 1, 1)
 
-        self.format_combo = QComboBox()
+        self.format_combo = MdComboBox()
         self.format_combo.addItem("TS（原格式）", OutputFormat.TS)
         self.format_combo.addItem("MP4（需 ffmpeg）", OutputFormat.MP4)
-        form.addWidget(QLabel("格式"), 1, 2)
+        form.addWidget(self._field_label("格式"), 1, 2)
         form.addWidget(self.format_combo, 1, 3)
 
         range_row = QHBoxLayout()
-        self.range_check = QCheckBox("启用")
-        self.range_start = QSpinBox()
+        range_row.setSpacing(8)
+        self.range_check = MdCheckBox("启用")
+        self.range_start = MdSpinBox()
         self.range_start.setRange(1, 999_999)
-        self.range_end = QSpinBox()
+        self.range_start.setEnabled(False)
+        self.range_end = MdSpinBox()
         self.range_end.setRange(1, 999_999)
+        self.range_end.setEnabled(False)
+        self.range_check.toggled.connect(self._on_range_toggled)
+        sep_label = QLabel("～")
+        sep_label.setStyleSheet(f"color: {material.TEXT_SECONDARY};")
         range_row.addWidget(self.range_check)
         range_row.addWidget(self.range_start)
-        range_row.addWidget(QLabel("～"))
+        range_row.addWidget(sep_label)
         range_row.addWidget(self.range_end)
         range_row.addStretch(1)
-        form.addWidget(QLabel("片段区间"), 2, 0)
+        form.addWidget(self._field_label("片段区间"), 2, 0)
         form.addLayout(range_row, 2, 1, 1, 3)
 
+        divider = QFrame()
+        divider.setFixedHeight(1)
+        divider.setStyleSheet(f"background-color: {material.DIVIDER}; border: none;")
+        input_card.body_layout.addWidget(divider)
+
         button_row = QHBoxLayout()
-        self.start_button = QPushButton("开始下载")
+        button_row.setSpacing(8)
+        self.start_button = MdButton("开始下载", variant="primary")
         self.start_button.clicked.connect(self._on_start_clicked)
-        self.pause_button = QPushButton("暂停")
+        self.pause_button = MdButton("暂停", variant="raised")
         self.pause_button.setEnabled(False)
         self.pause_button.clicked.connect(self._on_pause_clicked)
-        self.cancel_button = QPushButton("取消")
+        self.cancel_button = MdButton("取消", variant="flat")
         self.cancel_button.setEnabled(False)
         self.cancel_button.clicked.connect(self._on_cancel_clicked)
-        self.headers_button = QPushButton("请求头覆盖…")
-        self.headers_button.clicked.connect(self._open_task_override)
-        self.settings_button = QPushButton("设置…")
-        self.settings_button.clicked.connect(self._open_settings)
+
+        self.output_label = QLabel()
+        self.output_label.setStyleSheet(
+            f"color: {material.TEXT_SECONDARY}; font-size: 12px;"
+        )
+
         button_row.addWidget(self.start_button)
         button_row.addWidget(self.pause_button)
         button_row.addWidget(self.cancel_button)
         button_row.addStretch(1)
-        button_row.addWidget(self.headers_button)
-        button_row.addWidget(self.settings_button)
-        form.addLayout(button_row, 3, 0, 1, 4)
+        button_row.addWidget(self.output_label)
+        input_card.body_layout.addLayout(button_row)
 
-        self.output_label = QLabel()
-        self.output_label.setStyleSheet("color: #888888;")
-        form.addWidget(self.output_label, 4, 0, 1, 4)
+        # —— 卡片 2：进度与片段网格 ——
+        progress_card = MdCard("下载进度")
+        root.addWidget(progress_card, 1)
 
-        # —— 进度区 ——
-        progress_box = QGroupBox("进度")
-        root.addWidget(progress_box, 1)
-        progress_layout = QVBoxLayout(progress_box)
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
-        progress_layout.addWidget(self.progress_bar)
+        header_row = QHBoxLayout()
+        header_row.setSpacing(12)
         self.stats_label = QLabel("待开始")
-        progress_layout.addWidget(self.stats_label)
+        self.stats_label.setStyleSheet(
+            f"color: {material.TEXT_PRIMARY}; font-size: 13px; font-weight: 500;"
+        )
+        header_row.addWidget(self.stats_label)
+        header_row.addStretch(1)
+
+        legend_label = QLabel()
+        legend_label.setTextFormat(Qt.TextFormat.RichText)
+        legend_label.setText(
+            f'<span style="color:{material.STATUS_PENDING_TEXT};">■</span> 待下载 &nbsp;'
+            f'<span style="color:{material.STATUS_DOWNLOADING};">■</span> 下载中 &nbsp;'
+            f'<span style="color:{material.STATUS_DONE};">■</span> 已完成 &nbsp;'
+            f'<span style="color:{material.STATUS_FAILED};">■</span> 失败（点击重试）'
+        )
+        legend_label.setStyleSheet(f"color: {material.TEXT_SECONDARY}; font-size: 12px;")
+        header_row.addWidget(legend_label)
+        progress_card.body_layout.addLayout(header_row)
+
+        self.progress_bar = MdProgressBar()
+        self.progress_bar.setRange(0, 100)
+        progress_card.body_layout.addWidget(self.progress_bar)
 
         self.grid = SegmentGrid()
         self.grid.failed_clicked.connect(self._on_retry_segment)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(self.grid)
-        scroll.setMinimumHeight(180)
-        progress_layout.addWidget(scroll)
+        scroll.setMinimumHeight(200)
+        progress_card.body_layout.addWidget(scroll, 1)
 
-        root.addStretch(1)
         self._refresh_output_label()
+        self.statusBar().showMessage("就绪")
+
+    @staticmethod
+    def _field_label(text: str) -> QLabel:
+        label = QLabel(text)
+        label.setStyleSheet(
+            f"color: {material.TEXT_SECONDARY}; font-size: 13px; font-weight: 500;"
+        )
+        return label
 
     # ------------------------------------------------------------ 启动流程
 
@@ -212,19 +279,25 @@ class MainWindow(QMainWindow):
     def _ask_variant(self, variants: list[Variant]) -> Variant | None:
         dialog = QDialog(self)
         dialog.setWindowTitle("选择码率")
+        dialog.setMinimumWidth(380)
         layout = QVBoxLayout(dialog)
-        layout.addWidget(QLabel("检测到 master 播放列表，请选择要下载的码率："))
-        combo = QComboBox()
+        layout.setContentsMargins(24, 24, 24, 16)
+        layout.setSpacing(16)
+        card = MdCard("检测到 master 播放列表")
+        layout.addWidget(card)
+        card.body_layout.addWidget(QLabel("请选择要下载的清晰度 / 码率："))
+        combo = MdComboBox()
         best = 0
         for i, variant in enumerate(variants):
             combo.addItem(variant.label(), i)
             if (variant.bandwidth or 0) > (variants[best].bandwidth or 0):
                 best = i
         combo.setCurrentIndex(best)
-        layout.addWidget(combo)
+        card.body_layout.addWidget(combo)
         buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+            QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Ok
         )
+        style_dialog_button_box(buttons, ok_text="开始下载", cancel_text="取消")
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)
@@ -432,6 +505,11 @@ class MainWindow(QMainWindow):
     def _refresh_output_label(self) -> None:
         self.output_label.setText(f"输出目录：{self._output_dir()}")
 
+    def _on_range_toggled(self, checked: bool) -> None:
+        allow = checked and self._phase == "idle"
+        self.range_start.setEnabled(allow)
+        self.range_end.setEnabled(allow)
+
     def _set_phase(self, phase: str, message: str | None = None) -> None:
         self._phase = phase
         idle = phase == "idle"
@@ -443,11 +521,12 @@ class MainWindow(QMainWindow):
             self.title_edit,
             self.format_combo,
             self.range_check,
-            self.range_start,
-            self.range_end,
             self.headers_button,
         ):
             widget.setEnabled(idle)
+        range_enabled = idle and self.range_check.isChecked()
+        self.range_start.setEnabled(range_enabled)
+        self.range_end.setEnabled(range_enabled)
         if message is not None:
             self.statusBar().showMessage(message)
 
