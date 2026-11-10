@@ -84,5 +84,12 @@ if sys.platform == "darwin":
         coll,
         name="m3u8-downloader.app",
         icon=None,
-        bundle_identifier=None,
+        bundle_identifier="com.linusauditore.m3u8-downloader",
+        info_plist={
+            "CFBundleDisplayName": "m3u8-downloader",
+            "CFBundleName": "m3u8-downloader",
+            "CFBundleShortVersionString": "0.1.0",
+            "CFBundleVersion": "0.1.0",
+            "NSHighResolutionCapable": True,
+        },
     )

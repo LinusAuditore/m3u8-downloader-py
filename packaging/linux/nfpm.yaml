@@ -1,0 +1,51 @@
+name: "m3u8-downloader"
+arch: "${NFPM_ARCH}"
+platform: "linux"
+version: "${VERSION}"
+release: "1"
+section: "video"
+priority: "optional"
+maintainer: "Xinghao Zuo <55333469+LinusAuditore@users.noreply.github.com>"
+description: |
+  Local m3u8 video downloader with PySide6 Material Design 1 GUI and CLI.
+  Supports standard AES-128 decryption (RFC 8216), resumable segment downloads,
+  custom headers/proxies, and lossless MP4 remuxing via external ffmpeg.
+vendor: "Xinghao Zuo"
+homepage: "https://github.com/LinusAuditore/m3u8-downloader-py"
+license: "BSD-2-Clause"
+
+recommends:
+  - ffmpeg
+
+overrides:
+  deb:
+    recommends:
+      - ffmpeg
+      - libxcb-cursor0
+  rpm:
+    recommends:
+      - ffmpeg
+      - xcb-util-cursor
+
+contents:
+  - src: "./dist/m3u8-downloader"
+    dst: "/opt/m3u8-downloader"
+    type: "tree"
+
+  - src: "/opt/m3u8-downloader/m3u8-downloader"
+    dst: "/usr/bin/m3u8-downloader"
+    type: "symlink"
+
+  - src: "/opt/m3u8-downloader/m3u8-downloader-cli"
+    dst: "/usr/bin/m3u8-downloader-cli"
+    type: "symlink"
+
+  - src: "./packaging/linux/m3u8-downloader.desktop"
+    dst: "/usr/share/applications/m3u8-downloader.desktop"
+    file_info:
+      mode: 0644
+
+  - src: "./LICENSE"
+    dst: "/usr/share/licenses/m3u8-downloader/LICENSE"
+    file_info:
+      mode: 0644

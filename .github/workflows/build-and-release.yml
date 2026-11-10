@@ -1,0 +1,262 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }}-${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos
+            arch: arm64
+            runner: macos-15
+            python_arch: arm64
+          - os: macos
+            arch: x64
+            runner: macos-15-intel
+            python_arch: x64
+          - os: windows
+            arch: x64
+            runner: windows-latest
+            python_arch: x64
+          - os: windows
+            arch: arm64
+            runner: windows-11-arm
+            python_arch: arm64
+          - os: linux
+            arch: x64
+            runner: ubuntu-24.04
+            python_arch: x64
+            nfpm_arch: amd64
+          - os: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
+            python_arch: arm64
+            nfpm_arch: arm64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: ${{ matrix.python_arch }}
+          cache: "pip"
+          cache-dependency-path: "pyproject.toml"
+
+      - name: Resolve package version
+        id: meta
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            RAW_VER="${GITHUB_REF#refs/tags/v}"
+          else
+            RAW_VER=$(python -c "import m3u8_downloader; print(m3u8_downloader.__version__)")
+          fi
+          echo "VERSION=${RAW_VER}" >> "$GITHUB_ENV"
+          echo "version=${RAW_VER}" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: ${RAW_VER}"
+
+      - name: Install Linux system dependencies
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils \
+            fontconfig \
+            libdbus-1-3 \
+            libegl1 \
+            libgl1 \
+            libxcb-cursor0 \
+            libxkbcommon-x11-0
+
+      - name: Install Python dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install . pyinstaller pytest
+
+      - name: Run unit tests and offscreen GUI/core verification
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          if [ -d "tests" ]; then
+            pytest
+          fi
+          python - <<'PY'
+          import os
+          os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+          from Crypto.Cipher import AES
+          from Crypto.Util.Padding import pad
+          from PySide6.QtWidgets import QApplication
+          from m3u8_downloader.core.config import Settings
+          from m3u8_downloader.core.crypto import decrypt_segment
+          from m3u8_downloader.core.playlist import parse_playlist
+          from m3u8_downloader.gui.main_window import MainWindow
+          from m3u8_downloader.gui.settings_dialog import SettingsDialog
+
+          # 1. Core playlist & AES-128 verification
+          pl = parse_playlist(
+              "#EXTM3U\n#EXTINF:2.0,\nseg0.ts\n#EXT-X-ENDLIST\n",
+              "https://example.com/live/index.m3u8",
+          )
+          assert pl.segment_urls == ["https://example.com/live/seg0.ts"]
+          key = b"0123456789abcdef"
+          iv = b"fedcba9876543210"
+          enc = AES.new(key, AES.MODE_CBC, iv).encrypt(pad(b"hello-hls", 16))
+          assert decrypt_segment(enc, key, iv) == b"hello-hls"
+
+          # 2. Offscreen PySide6 MD1 GUI verification
+          app = QApplication.instance() or QApplication([])
+          win = MainWindow()
+          dlg = SettingsDialog(Settings())
+          _ = win.grab()
+          _ = dlg.grab()
+          dlg.close()
+          win.close()
+          print("Offscreen core + GUI verification passed.")
+          PY
+
+      - name: Build onedir bundle with PyInstaller
+        shell: bash
+        run: |
+          pyinstaller m3u8-downloader.spec --noconfirm --clean
+
+      - name: Smoke test packaged CLI binary
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            CLI_BIN="dist/m3u8-downloader/m3u8-downloader-cli.exe"
+          else
+            CLI_BIN="./dist/m3u8-downloader/m3u8-downloader-cli"
+          fi
+          "$CLI_BIN" --version
+          "$CLI_BIN" --help > /dev/null
+
+      - name: Package macOS DMG (${{ matrix.arch }})
+        if: matrix.os == 'macos'
+        shell: bash
+        run: |
+          codesign --force --deep --sign - dist/m3u8-downloader.app
+          codesign --verify --deep --strict dist/m3u8-downloader.app
+          mkdir -p dmg_stage artifacts
+          cp -R dist/m3u8-downloader.app dmg_stage/
+          ln -s /Applications dmg_stage/Applications
+          DMG_PATH="artifacts/m3u8-downloader-${VERSION}-macos-${{ matrix.arch }}.dmg"
+          hdiutil create \
+            -volname "m3u8-downloader" \
+            -srcfolder dmg_stage \
+            -ov -format UDZO \
+            "${DMG_PATH}"
+          ls -lh "${DMG_PATH}"
+
+      - name: Package Windows Installer EXE (${{ matrix.arch }})
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $isccCandidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $isccCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) {
+            $cmd = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+            if ($cmd) { $iscc = $cmd.Source }
+          }
+          if (-not $iscc) {
+            Write-Host "Installing Inno Setup 6..."
+            $installer = "$env:TEMP\innosetup-6.3.3.exe"
+            Invoke-WebRequest -Uri "https://files.jrsoftware.org/is/6/innosetup-6.3.3.exe" -OutFile $installer -UseBasicParsing
+            Start-Process -FilePath $installer -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-" -Wait
+            $iscc = $isccCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          }
+          if (-not $iscc) {
+            throw "ISCC.exe not found after installation attempt."
+          }
+          New-Item -ItemType Directory -Force -Path "artifacts" | Out-Null
+          & $iscc `
+            "/DMyAppVersion=${env:VERSION}" `
+            "/DMyAppArch=${{ matrix.arch }}" `
+            "/DMyOutputDir=$PWD\artifacts" `
+            "packaging\windows\installer.iss"
+          Get-ChildItem -Path "artifacts"
+
+      - name: Package Linux DEB and RPM (${{ matrix.arch }})
+        if: matrix.os == 'linux'
+        shell: bash
+        run: |
+          NFPM_VER="2.41.1"
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            TAR_ARCH="arm64"
+            RPM_ARCH="aarch64"
+          else
+            TAR_ARCH="x86_64"
+            RPM_ARCH="x86_64"
+          fi
+          curl -fsSL "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VER}/nfpm_${NFPM_VER}_Linux_${TAR_ARCH}.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin nfpm
+          nfpm --version
+
+          mkdir -p artifacts
+          export NFPM_ARCH="${{ matrix.nfpm_arch }}"
+          nfpm package \
+            --config packaging/linux/nfpm.yaml \
+            --packager deb \
+            --target "artifacts/m3u8-downloader_${VERSION}_${{ matrix.nfpm_arch }}.deb"
+          nfpm package \
+            --config packaging/linux/nfpm.yaml \
+            --packager rpm \
+            --target "artifacts/m3u8-downloader-${VERSION}-1.${RPM_ARCH}.rpm"
+          ls -lh artifacts/
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ matrix.os }}-${{ matrix.arch }}
+          path: artifacts/*
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS.txt
+        working-directory: release-assets
+        run: |
+          ls -lh
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true

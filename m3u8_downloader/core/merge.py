@@ -12,6 +12,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -196,6 +197,7 @@ def _merge_mp4(
         stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
+        **_popen_kwargs(),
     )
     assert process.stdin is not None and process.stderr is not None
     stderr_chunks: list[bytes] = []
@@ -234,6 +236,14 @@ def _merge_mp4(
 
 def _part_output(final: Path) -> Path:
     return final.with_name(final.name + ".part")
+
+
+def _popen_kwargs() -> dict[str, object]:
+    """Windows 下隐藏外部命令行子进程窗口，避免 GUI 模式弹出黑框。"""
+    if sys.platform == "win32":
+        flag = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        return {"creationflags": flag}
+    return {}
 
 
 def _stderr_text(chunks: list[bytes]) -> str:

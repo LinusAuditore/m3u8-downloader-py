@@ -89,6 +89,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _configure_stdio()
     args = build_arg_parser().parse_args(argv)
     logging.basicConfig(
         level=logging.WARNING, format="%(levelname)s:%(name)s:%(message)s"
@@ -252,6 +253,28 @@ def _default_variant(variants) -> int:
         if (variant.bandwidth or 0) > (variants[best].bandwidth or 0):
             best = i
     return best
+
+
+def _configure_stdio() -> None:
+    """将标准输出/错误重配置为 UTF-8，并在 Windows 终端启用 VT100 控制序列。"""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (AttributeError, ValueError, OSError):
+                pass
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+            handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+            mode = ctypes.c_uint32()
+            if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+                kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
