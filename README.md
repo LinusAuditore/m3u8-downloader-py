@@ -77,7 +77,7 @@ python -m m3u8_downloader.cli <m3u8地址> [选项]     # 命令行
   [Momo707577045/m3u8-downloader](https://github.com/Momo707577045/m3u8-downloader)，
   在此致谢。本项目仅参考其行为与思路、未复制其代码，并针对本地环境重新设计
   （原仓库无许可证文件）。
-- 本项目由 ZCode 智能编程助手使用 GLM 5.3 Flash 模型辅助开发完成。
+- 本项目由 ZCode 智能编程助手使用 GLM 5.3 Flash 模型辅助开发完成。后续通过 Cursor 使用 Gemini 4 Argon 模型辅助开发与完善。
 
 ## 免责声明
 
